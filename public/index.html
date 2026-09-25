@@ -24,6 +24,7 @@
         <button id="btn-responsibility" class="btn">📋 人员交接责任单</button>
         <button id="btn-appearance" class="btn">🎭 出场时段核对</button>
         <button id="btn-conflict-fix" class="btn btn-accent">🛠 冲突修复预演</button>
+        <button id="btn-change-impact" class="btn btn-accent">🧯 变更影响预演</button>
         <button id="btn-verified-chain" class="btn">✅ 已核实交接链</button>
         <button id="btn-signoff-plan" class="btn btn-accent">🧩 跨道具补签计划</button>
         <button id="btn-reverify" class="btn" title="重新读取记录并按时间重放">↻ 重新核验</button>
@@ -159,6 +160,45 @@
       </div>
       <div id="splan-conflicts" class="splan-conflicts"></div>
       <div class="splan-readonly">计划只读：不会自动签收或修改任何记录；点击待签记录完成实际签收后，请重新计算计划。</div>
+    </section>
+
+    <!-- 交接记录变更影响预演结果（只读模拟，不写入记录或签收） -->
+    <section id="impact-panel" class="panel panel-impact hidden">
+      <div class="panel-head impact-head">
+        <h2>🧯 交接记录变更影响预演 · <span id="impact-prop-name">-</span> · <span id="impact-action-label">-</span></h2>
+        <button type="button" class="btn btn-sm" id="btn-impact-close" title="关闭预演结果">✕ 关闭</button>
+      </div>
+      <div id="impact-stale" class="banner banner-error hidden">
+        预演生成后数据版本已变化（<span id="impact-rev-old"></span> → <span id="impact-rev-new"></span>），
+        以下模拟结果可能已过期——
+        <button type="button" class="btn btn-sm btn-primary" id="btn-impact-rerun">重新预演</button>
+      </div>
+      <div class="inv-summary" id="impact-summary"></div>
+      <div id="impact-change" class="impact-change"></div>
+      <div class="impact-grid">
+        <div class="impact-col impact-col-before">
+          <div class="impact-col-head">变更前（当前记录）</div>
+          <div id="impact-before"></div>
+        </div>
+        <div class="impact-col impact-col-after">
+          <div class="impact-col-head">变更后（模拟，不落盘）</div>
+          <div id="impact-after"></div>
+        </div>
+      </div>
+      <div class="resp-section-title">因此失效 / 受影响的签收（按当前内容指纹核对）</div>
+      <div class="table-wrap">
+        <table class="table" id="impact-signoff-table">
+          <thead>
+            <tr>
+              <th class="col-rowno">#</th><th>道具</th><th>分钟</th><th>交出者</th><th>接收者</th>
+              <th>签收方</th><th>签收姓名</th><th>失效原因</th><th>记录</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="impact-gained" class="impact-gained"></div>
+      <div class="splan-readonly">预演只读：不会修改 / 删除任何交接记录，也不会写入或清除任何签收；请人工核对后，再在右下记录表中实际修改 / 删除。</div>
     </section>
 
     <div class="grid">
@@ -385,6 +425,59 @@
       <div id="fix-result" class="fix-result"></div>
       <div class="dialog-actions">
         <button type="button" class="btn" data-close>关闭</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- 交接记录变更影响预演弹窗（只读模拟，不写入记录或签收） -->
+  <dialog id="impact-dialog" class="dialog">
+    <form method="dialog" id="impact-form">
+      <h3>交接记录变更影响预演</h3>
+      <p class="dialog-tip">
+        从交接记录表选择一条记录，输入新的<strong>分钟、交出者、接收者、备注</strong>或选择<strong>删除</strong>，
+        按现有规则校验后<strong>只读模拟</strong>：针对该道具分别重放<strong>变更前后同分钟唯一链</strong>，
+        并按<strong>当前内容指纹</strong>核对双方签收——被修改记录的旧签收在模拟结果中失效。
+        页面并排显示首个冲突、最终持有人、已核实前缀及其阻断记录，列出因此失效的签收。
+        预演<strong>不会写入任何记录或签收</strong>。
+      </p>
+      <label class="field">
+        <span>交接记录 <em>*</em></span>
+        <select id="impact-record" required></select>
+      </label>
+      <div id="impact-current" class="signoff-record"></div>
+      <label class="field">
+        <span>模拟操作 <em>*</em></span>
+        <select id="impact-action">
+          <option value="UPDATE">修改该记录</option>
+          <option value="DELETE">删除该记录</option>
+        </select>
+      </label>
+      <div id="impact-fields">
+        <div class="field-row">
+          <label class="field field-minute">
+            <span>分钟 <em>*</em></span>
+            <input type="number" id="impact-minute" min="0" step="1" required placeholder="如 3" />
+          </label>
+          <label class="field">
+            <span>交出者 <em>*</em></span>
+            <input type="text" id="impact-from" maxlength="30" required list="people-list" placeholder="如 张三" />
+          </label>
+          <label class="field">
+            <span>接收者 <em>*</em></span>
+            <input type="text" id="impact-to" maxlength="30" required list="people-list" placeholder="如 李四" />
+          </label>
+        </div>
+        <label class="field">
+          <span>备注</span>
+          <input type="text" id="impact-note" maxlength="100" placeholder="交接场景（可选）" />
+        </label>
+      </div>
+      <div id="impact-delete-tip" class="banner banner-error hidden">
+        将在模拟中删除该记录；其旧签收在模拟结果中一并失效（不会真的删除）。
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="impact-submit">开始预演</button>
       </div>
     </form>
   </dialog>

@@ -11,6 +11,8 @@ let signoffRecordId = null; // 当前签收弹窗对应的记录 id
 let signoffHash = null;     // 打开签收弹窗时服务端下发的记录内容指纹（提交时携带）
 let splanQuery = null;      // 最近一次补签计划的查询参数（用于实际签收后重新计算）
 let splanRev = null;        // 生成计划时的数据版本（数据变化后提示计划过期）
+let impactRecordId = null;  // 当前变更影响预演选中的记录 id
+let impactResult = null;    // 最近一次变更影响预演结果（含 rev）
 
 const $ = (sel) => document.querySelector(sel);
 const els = {
@@ -134,6 +136,33 @@ const els = {
   splanPropsTableBody: document.querySelector('#splan-props-table tbody'),
   splanConflicts: $('#splan-conflicts'),
   btnSplanClose: $('#btn-splan-close'),
+  // 交接记录变更影响预演（只读）
+  btnChangeImpact: $('#btn-change-impact'),
+  impactDialog: $('#impact-dialog'),
+  impactForm: $('#impact-form'),
+  impactRecordSelect: $('#impact-record'),
+  impactCurrent: $('#impact-current'),
+  impactAction: $('#impact-action'),
+  impactFields: $('#impact-fields'),
+  impactDeleteTip: $('#impact-delete-tip'),
+  impactMinute: $('#impact-minute'),
+  impactFrom: $('#impact-from'),
+  impactTo: $('#impact-to'),
+  impactNote: $('#impact-note'),
+  impactPanel: $('#impact-panel'),
+  impactPropName: $('#impact-prop-name'),
+  impactActionLabel: $('#impact-action-label'),
+  impactStale: $('#impact-stale'),
+  impactRevOld: $('#impact-rev-old'),
+  impactRevNew: $('#impact-rev-new'),
+  btnImpactRerun: $('#btn-impact-rerun'),
+  impactSummary: $('#impact-summary'),
+  impactChange: $('#impact-change'),
+  impactBefore: $('#impact-before'),
+  impactAfter: $('#impact-after'),
+  impactSignoffTableBody: document.querySelector('#impact-signoff-table tbody'),
+  impactGained: $('#impact-gained'),
+  btnImpactClose: $('#btn-impact-close'),
 };
 
 const STATUS_TEXT = {
@@ -170,6 +199,15 @@ async function loadState() {
     prevRev != null && state.rev !== prevRev && state.rev !== splanRev
   ) {
     els.splanStale.classList.remove('hidden');
+  }
+  // 变更影响预演面板打开时，数据版本变化即提示重新预演
+  if (
+    impactResult && !els.impactPanel.classList.contains('hidden') &&
+    prevRev != null && state.rev !== prevRev && state.rev !== impactResult.rev
+  ) {
+    els.impactRevOld.textContent = impactResult.rev;
+    els.impactRevNew.textContent = state.rev;
+    els.impactStale.classList.remove('hidden');
   }
 }
 
@@ -391,6 +429,7 @@ function renderRecordTable() {
       </td>
       <td class="col-actions">
         <button class="btn btn-sm" data-edit-record="${esc(r.id)}">修改</button>
+        <button class="btn btn-sm" data-impact-record="${esc(r.id)}" title="只读模拟修改 / 删除该记录对交接链与已核实签收的影响">影响预演</button>
         <button class="btn btn-sm btn-danger" data-del-record="${esc(r.id)}">删除</button>
       </td>
     </tr>`;
@@ -559,6 +598,25 @@ function bindEvents() {
     }
   });
 
+  // 交接记录变更影响预演（只读）
+  els.btnChangeImpact.addEventListener('click', () => openImpactDialog());
+  els.impactRecordSelect.addEventListener('change', () => fillImpactDialogFromRecord());
+  els.impactAction.addEventListener('change', () => syncImpactActionUI());
+  els.impactForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitImpact();
+  });
+  els.btnImpactClose.addEventListener('click', () => els.impactPanel.classList.add('hidden'));
+  els.btnImpactRerun.addEventListener('click', rerunImpact);
+  // 预演结果中的记录编号：关闭面板后定位右下记录表中的原记录
+  els.impactPanel.addEventListener('click', (e) => {
+    const link = e.target.closest?.('[data-record-id]');
+    if (link) {
+      els.impactPanel.classList.add('hidden');
+      locateRecord(link.dataset.recordId);
+    }
+  });
+
   // 交接双方签收
   els.signoffForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -690,6 +748,11 @@ function bindEvents() {
     if (editRecord) {
       const r = state.records.find((x) => x.id === editRecord.dataset.editRecord);
       if (r) openRecordDialog(r);
+      return;
+    }
+    const impactRecord = t.closest?.('[data-impact-record]');
+    if (impactRecord) {
+      openImpactDialog(impactRecord.dataset.impactRecord);
       return;
     }
     const signRecord = t.closest?.('[data-sign-record]');
@@ -1746,6 +1809,334 @@ async function submitSplan() {
     els.splanDialog.close();
     renderSplanResult(result);
     toast('补签计划已生成（只读，未改动任何数据）');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+/* ==================== 交接记录变更影响预演（只读） ==================== */
+
+const IMPACT_STATUS_TEXT = {
+  RETURNED: { cls: 'badge-ok', text: '✓ 已归仓' },
+  NOT_RETURNED: { cls: 'badge-warn', text: '⚠ 结束未归仓' },
+  CONFLICT: { cls: 'badge-error', text: '✕ 交接链冲突' },
+  NO_RECORDS: { cls: 'badge-muted', text: '— 无交接记录' },
+};
+
+function impactPropName(propId) {
+  const p = state.props.find((x) => x.id === propId);
+  return p ? p.name : '⚠ 道具已删除';
+}
+
+function openImpactDialog(recordId = null) {
+  if (state.records.length === 0) {
+    toast('还没有交接记录，无法进行变更影响预演', true);
+    return;
+  }
+  const sorted = [...state.records].sort((a, b) =>
+    a.minute - b.minute || (a.createdAt || 0) - (b.createdAt || 0) ||
+    String(a.id).localeCompare(String(b.id))
+  );
+  els.impactRecordSelect.innerHTML = sorted.map((r) => {
+    const orphan = !state.props.some((p) => p.id === r.propId);
+    return `<option value="${esc(r.id)}">${
+      orphan ? '⚠ ' : ''
+    }第${r.minute}分 · ${esc(impactPropName(r.propId))} · ${esc(r.from)} → ${esc(r.to)} · ${shortId(r.id)}</option>`;
+  }).join('');
+  impactRecordId = recordId && state.records.some((r) => r.id === recordId) ? recordId : state.records[0].id;
+  els.impactRecordSelect.value = impactRecordId;
+  els.impactAction.value = 'UPDATE';
+  fillImpactDialogFromRecord();
+  els.impactDialog.showModal();
+  els.impactMinute.focus();
+}
+
+function fillImpactDialogFromRecord() {
+  impactRecordId = els.impactRecordSelect.value;
+  const r = state.records.find((x) => x.id === impactRecordId);
+  if (!r) return;
+  els.impactCurrent.innerHTML =
+    `当前记录：<strong>第${r.minute}分</strong> · ${esc(impactPropName(r.propId))} · ` +
+    `${esc(r.from)} → ${esc(r.to)}${r.note ? ` · 备注：${esc(r.note)}` : ''} ` +
+    `（${shortId(r.id)}）`;
+  els.impactMinute.value = r.minute;
+  els.impactFrom.value = r.from;
+  els.impactTo.value = r.to;
+  els.impactNote.value = r.note || '';
+  syncImpactActionUI();
+}
+
+function syncImpactActionUI() {
+  const isDelete = els.impactAction.value === 'DELETE';
+  els.impactFields.classList.toggle('hidden', isDelete);
+  els.impactDeleteTip.classList.toggle('hidden', !isDelete);
+  // 删除时关闭字段必填，避免浏览器拦截提交
+  for (const el of [els.impactMinute, els.impactFrom, els.impactTo]) {
+    el.required = !isDelete;
+  }
+}
+
+function impactChainHtml(side, change) {
+  const targetId = change.recordId;
+  const deleted = change.action === 'DELETE';
+  const nodes = [`<span class="chain-node">${esc(state.warehouse)}</span>`];
+  side.chain.forEach((r) => {
+    const target = r.id === targetId;
+    const cls = target && !deleted ? 'impact-chain-target' : '';
+    nodes.push(
+      `<span class="chain-arrow">→</span>` +
+      `<span class="chain-node ${cls}">${esc(r.to)}</span>` +
+      `<span class="chain-meta">[第${r.minute}分 · <a data-record-id="${esc(r.id)}" title="定位原记录">${shortId(r.id)}</a>]</span>`
+    );
+  });
+  if (side.firstConflict) {
+    nodes.push(
+      `<span class="chain-arrow">→</span>` +
+      `<span class="chain-node vchain-stop">✕ 第${side.firstConflict.minute}分钟冲突</span>`
+    );
+  }
+  return `<div class="chain impact-chain">${nodes.join(' ')}</div>`;
+}
+
+function impactConflictHtml(side) {
+  const c = side.firstConflict;
+  if (!c) return '';
+  const links = c.recordRefs
+    .map((r) => `<a data-record-id="${esc(r.id)}">记录 ${shortId(r.id)}</a>`)
+    .join('、');
+  const typeText = c.type === 'AMBIGUOUS' ? '多条可接续记录（交接链不唯一）' : '剩余记录无法接续（断链）';
+  return `
+    <div class="impact-conflict">
+      <div class="conflict-head">首个冲突：${typeText} · 第${c.minute}分钟 · 冲突前持有人「${esc(c.holder)}」</div>
+      <div>${esc(c.reason)}</div>
+      <div style="margin-top:3px">定位记录：${links}</div>
+    </div>`;
+}
+
+function impactVerifiedHtml(side) {
+  const v = side.verified;
+  let head;
+  if (v.status === 'VERIFIED') {
+    head = `<span class="inv-badge inv-ok">✓ 已核实 ${v.verifiedCount} 条，链已核实</span>`;
+  } else if (v.status === 'BLOCKED_SIGNOFF') {
+    head = `<span class="inv-badge inv-bad">✕ 缺签阻断</span>`;
+  } else if (v.status === 'CONFLICT') {
+    head = `<span class="inv-badge inv-bad">✕ 原链冲突阻断</span>`;
+  } else {
+    head = `<span class="inv-badge inv-muted">— 窗口内无交接记录</span>`;
+  }
+  let blocker = '';
+  const b = v.blocker;
+  if (b && b.type === 'MISSING_SIGNOFF') {
+    const r = b.record;
+    const miss = b.missingSides
+      .map((s) => (s === 'from' ? `交出者「${esc(r.from)}」` : `接收者「${esc(r.to)}」`))
+      .join('、');
+    blocker = `
+      <div class="impact-blocker">
+        阻断记录：第${r.minute}分 ${esc(r.from)} → ${esc(r.to)}
+        （<a data-record-id="${esc(r.id)}">${shortId(r.id)}</a>），${miss} 未有效签收；
+        此前最后已核实持有人：<strong>「${esc(v.lastVerifiedHolder)}」</strong>，该记录及其后不计入已核实。
+      </div>`;
+  } else if (b && b.type === 'CONFLICT') {
+    const links = (b.conflict.records || [])
+      .map((id) => `<a data-record-id="${esc(id)}">记录 ${shortId(id)}</a>`)
+      .join('、');
+    blocker = `
+      <div class="impact-blocker">
+        阻断原因：原交接链第${b.conflict.minute}分钟冲突
+        （${b.conflict.type === 'AMBIGUOUS' ? '多条可接续记录' : '剩余记录无法接续'}，定位：${links}）；
+        此前最后已核实持有人：<strong>「${esc(v.lastVerifiedHolder)}」</strong>。
+      </div>`;
+  }
+  const prefixNodes = [`<span class="chain-node">${esc(state.warehouse)}</span>`];
+  v.verifiedChain.forEach((r) => {
+    prefixNodes.push(
+      `<span class="chain-arrow">→</span><span class="chain-node">${esc(r.to)}</span>` +
+      `<span class="chain-meta">[第${r.minute}分 · <a data-record-id="${esc(r.id)}" title="定位原记录">${shortId(r.id)}</a> · 交✓接✓]</span>`
+    );
+  });
+  return `
+    <div class="impact-side-line">${head}
+      最后已核实持有人：<strong>「${esc(v.lastVerifiedHolder)}」</strong></div>
+    ${v.verifiedChain.length ? `<div class="chain impact-chain">${prefixNodes.join(' ')}</div>` : ''}
+    ${blocker}`;
+}
+
+function impactSideHtml(side, change) {
+  const badge = IMPACT_STATUS_TEXT[side.status];
+  return `
+    <div class="impact-col-body">
+      <div class="impact-side-line">
+        <span class="badge ${badge.cls}">${badge.text}</span>
+        最终持有人：<strong>「${esc(side.finalHolder)}」</strong>
+        （唯一链重放 ${side.replayedCount} / ${side.totalCount} 条）
+      </div>
+      ${impactConflictHtml(side)}
+      <div class="impact-side-line" style="font-weight:700;margin-top:8px">已核实前缀（按当前内容指纹核对双方签收）</div>
+      ${impactVerifiedHtml(side)}
+      <div class="impact-side-line" style="font-weight:700;margin-top:8px">同分钟唯一链（完整重放）</div>
+      ${impactChainHtml(side, change)}
+    </div>`;
+}
+
+function renderImpactResult(result) {
+  impactResult = result;
+  els.impactStale.classList.add('hidden');
+  els.impactPropName.textContent = result.prop.name;
+  els.impactActionLabel.textContent =
+    result.change.action === 'DELETE'
+      ? `模拟删除记录 ${shortId(result.change.recordId)}`
+      : `模拟修改记录 ${shortId(result.change.recordId)}`;
+
+  const s = result.summary;
+  const deltaText = s.verifiedDelta === 0
+    ? '已核实条数不变'
+    : (s.verifiedDelta > 0 ? `已核实 +${s.verifiedDelta} 条` : `已核实 ${s.verifiedDelta} 条`);
+  const deltaCls = s.verifiedDelta > 0 ? 'chip-ok' : (s.verifiedDelta < 0 ? 'chip-bad' : 'chip-muted');
+  const chips = [
+    [`变更前已核实 ${s.verifiedBefore} 条`, ''],
+    [`变更后已核实 ${s.verifiedAfter} 条`, ''],
+    [deltaText, deltaCls],
+    [`旧签收失效 ${s.targetInvalidated} 项`, s.targetInvalidated > 0 ? 'chip-bad' : 'chip-ok'],
+    [`掉出已核实前缀 ${s.prefixLost} 项`, s.prefixLost > 0 ? 'chip-warn' : 'chip-ok'],
+    [`新计入已核实 ${s.gainedVerifiedCount} 条`, s.gainedVerifiedCount > 0 ? 'chip-ok' : 'chip-muted'],
+    [`数据版本 rev ${result.rev}`, 'chip-muted'],
+  ];
+  els.impactSummary.innerHTML = chips
+    .map(([text, cls]) => `<span class="inv-chip ${cls}">${text}</span>`)
+    .join('');
+
+  const c = result.change;
+  let changeInner;
+  if (c.action === 'DELETE') {
+    changeInner = `
+      <strong>模拟删除</strong>记录 <strong>${shortId(c.recordId)}</strong>：
+      第${c.before.minute}分 ${esc(c.before.from)} → ${esc(c.before.to)}${
+        c.before.note ? esc(`（${c.before.note}）`) : ''
+      }，删除后该道具剩余 ${result.after.totalCount} 条记录。`;
+  } else {
+    const diffs = c.changedFields.map((f) => {
+      const oldVal = f.field === 'note' ? (f.before || '（空）') : (f.before ?? '（空）');
+      const newVal = f.field === 'note' ? (f.after || '（空）') : (f.after ?? '（空）');
+      return `<div class="field-diff">${f.label}：<span class="old-val">${esc(String(oldVal))}</span> → <span class="new-val">${esc(String(newVal))}</span></div>`;
+    }).join('');
+    changeInner = `<strong>模拟修改</strong>记录 <strong>${shortId(c.recordId)}</strong>：${diffs}`;
+  }
+  els.impactChange.innerHTML = `<div class="impact-change-card">${changeInner}</div>`;
+
+  els.impactBefore.innerHTML = impactSideHtml(result.before, c);
+  els.impactAfter.innerHTML = impactSideHtml(result.after, c);
+
+  const items = result.invalidatedSignoffs;
+  if (items.length === 0) {
+    els.impactSignoffTableBody.innerHTML =
+      '<tr><td colspan="9" class="empty">本次模拟没有使任何当前有效签收失效；改动未影响已核实前缀。</td></tr>';
+  } else {
+    els.impactSignoffTableBody.innerHTML = items.map((e, i) => {
+      const reasonCls = e.reason === 'PREFIX_LOST' ? 'impact-reason-prefix' : 'impact-reason-target';
+      return `
+        <tr>
+          <td class="cell-minute">${i + 1}</td>
+          <td><strong>${esc(e.propName)}</strong></td>
+          <td class="cell-minute">第${e.minute}分</td>
+          <td>${esc(e.from)}</td>
+          <td>${esc(e.to)}</td>
+          <td>${e.side === 'from'
+            ? '<span class="inv-badge inv-neutral">交出者</span>'
+            : '<span class="inv-badge inv-ok">接收者</span>'}</td>
+          <td><strong>${esc(e.name)}</strong></td>
+          <td class="inv-note ${reasonCls}">${esc(e.reasonText)}</td>
+          <td><a class="resp-rec-link" data-record-id="${esc(e.recordId)}" title="在右下记录表中定位">${shortId(e.recordId)}</a></td>
+        </tr>`;
+    }).join('');
+  }
+
+  if (result.gainedVerifiedRecords.length) {
+    const links = result.gainedVerifiedRecords
+      .map((r) => `<a class="resp-rec-link" data-record-id="${esc(r.id)}">${shortId(r.id)}</a>`)
+      .join('、');
+    els.impactGained.innerHTML =
+      `<div class="banner banner-ok">改动后另有 ${result.gainedVerifiedRecords.length} 条记录新计入已核实前缀：${links}（其签收与当前内容指纹一致）。</div>`;
+  } else {
+    els.impactGained.innerHTML = '';
+  }
+
+  els.impactPanel.classList.remove('hidden');
+  els.impactPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function impactPayload() {
+  const action = els.impactAction.value;
+  if (action === 'DELETE') {
+    return { recordId: impactRecordId, action: 'DELETE' };
+  }
+  return {
+    recordId: impactRecordId,
+    action: 'UPDATE',
+    minute: Number(els.impactMinute.value),
+    from: els.impactFrom.value.trim(),
+    to: els.impactTo.value.trim(),
+    note: els.impactNote.value,
+  };
+}
+
+async function submitImpact() {
+  if (!impactRecordId) {
+    toast('请先选择一条交接记录', true);
+    return;
+  }
+  const action = els.impactAction.value;
+  if (action === 'UPDATE') {
+    const minute = Number(els.impactMinute.value);
+    const from = els.impactFrom.value.trim();
+    const to = els.impactTo.value.trim();
+    if (!Number.isInteger(minute) || minute < 0) {
+      toast('分钟必须是不小于 0 的整数', true);
+      return;
+    }
+    if (!from || !to) {
+      toast('交出者与接收者不能为空', true);
+      return;
+    }
+    if (from === to) {
+      toast('交出者与接收者不能相同', true);
+      return;
+    }
+  }
+  try {
+    const result = await api('/api/change-impact/preview', {
+      method: 'POST',
+      body: JSON.stringify(impactPayload()),
+    });
+    els.impactDialog.close();
+    renderImpactResult(result);
+    toast('变更影响预演完成（只读模拟，未写入记录或签收）');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+async function rerunImpact() {
+  if (!impactResult) return;
+  // 用上一次的改动参数、以最新数据重新预演
+  try {
+    const payload = impactResult.change.action === 'DELETE'
+      ? { recordId: impactResult.change.recordId, action: 'DELETE' }
+      : {
+          recordId: impactResult.change.recordId,
+          action: 'UPDATE',
+          minute: impactResult.change.after.minute,
+          from: impactResult.change.after.from,
+          to: impactResult.change.after.to,
+          note: impactResult.change.after.note,
+        };
+    const result = await api('/api/change-impact/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    renderImpactResult(result);
+    toast('已按最新数据重新预演');
   } catch (err) {
     toast(err.message, true);
   }

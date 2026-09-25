@@ -10,6 +10,7 @@ const { previewBatch, hashRows } = require('./src/batch');
 const { buildResponsibilitySheet } = require('./src/responsibility');
 const { checkAppearances } = require('./src/appearance');
 const { previewConflictFix } = require('./src/conflict-fix');
+const { previewChangeImpact } = require('./src/change-impact');
 const {
   recordHash,
   signoffView,
@@ -512,6 +513,59 @@ app.post('/api/conflict-fix/preview', asyncRoute((req, res) => {
   } catch (err) {
     if (err.code === 'NOT_FOUND') return res.status(404).json({ error: err.message });
     if (err.code === 'NO_CONFLICT') return badRequest(res, err.message);
+    throw err;
+  }
+}));
+
+/* ---------------- 交接记录变更影响预演（只读，重放变更前后同分钟唯一链，不写入记录 / 签收） ---------------- */
+
+app.post('/api/change-impact/preview', asyncRoute((req, res) => {
+  const body = req.body || {};
+
+  let recordId;
+  try {
+    recordId = nonEmpty(body.recordId, '记录');
+  } catch (err) {
+    return badRequest(res, err.message);
+  }
+
+  const data = store.getData();
+  const target = data.records.find((r) => r.id === recordId);
+
+  // 入参按现有单条记录规则校验（非负整数分钟、交出者 / 接收者非空且不相同）；
+  // DELETE 时分钟 / 交出者 / 接收者 / 备注全部忽略
+  let patch;
+  if (body.action === 'DELETE') {
+    patch = { action: 'DELETE' };
+  } else if (body.action === 'UPDATE' || body.action === undefined) {
+    try {
+      // 模拟不允许换道具：沿用目标记录自己的 propId 走同一套校验
+      patch = {
+        action: 'UPDATE',
+        ...validateRecord(
+          {
+            propId: target ? target.propId : '',
+            minute: body.minute,
+            from: body.from,
+            to: body.to,
+            note: body.note,
+          },
+          data
+        ),
+      };
+    } catch (err) {
+      return badRequest(res, err.message);
+    }
+  } else {
+    return badRequest(res, '操作类型（action）必须是 UPDATE（修改）或 DELETE（删除）');
+  }
+
+  try {
+    // 纯读取 + 即时模拟重放，不写入任何记录或签收；结果携带数据版本 rev
+    return res.json(previewChangeImpact(data, recordId, patch));
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return res.status(404).json({ error: err.message });
+    if (err.code === 'BAD_REQUEST') return badRequest(res, err.message);
     throw err;
   }
 }));
