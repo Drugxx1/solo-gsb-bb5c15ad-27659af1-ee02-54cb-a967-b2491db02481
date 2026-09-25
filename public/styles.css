@@ -258,7 +258,7 @@ main .btn:hover { background: var(--muted-bg); color: var(--ink); }
   top: 0;
 }
 .table tbody tr:hover { background: #f9fafb; }
-.col-actions { width: 110px; white-space: nowrap; }
+.col-actions { width: 164px; white-space: nowrap; }
 .table .cell-minute { font-variant-numeric: tabular-nums; font-weight: 600; }
 .table .name-sub { color: var(--ink-soft); font-size: 11px; }
 .table tr.row-conflict { background: var(--error-bg); }
@@ -624,11 +624,62 @@ main .btn:hover { background: var(--muted-bg); color: var(--ink); }
   font-size: 13px;
 }
 
+/* ---------- 交接记录变更影响预演 ---------- */
+.panel-change { margin-bottom: 16px; }
+.change-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.change-head h2 span { color: var(--brand); }
+#change-stale { margin: 10px 18px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.change-desc {
+  margin: 10px 18px 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  background: #f7f9fb;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.change-desc strong { color: var(--ink); }
+.panel-change .inv-summary { padding: 10px 18px 0; }
+.change-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 10px 18px 4px;
+}
+.change-col {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fcfcfd;
+}
+.change-col h3 { margin: 0 0 8px; font-size: 13.5px; color: var(--brand); }
+.change-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12.5px;
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+.change-row .change-key { color: var(--ink-soft); white-space: nowrap; }
+.change-row > span:last-child { text-align: right; }
+.change-row.change-diff { background: var(--warn-bg); }
+.change-row.change-diff .change-key { color: var(--warn); font-weight: 600; }
+.change-sub { font-size: 12px; color: var(--ink-soft); padding: 0 6px 3px; }
+.change-sub a, .change-row a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.change-mode { display: flex; gap: 18px; margin-bottom: 10px; }
+.change-mode-opt { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.change-fields-disabled { opacity: 0.45; }
+#change-invalid-table { margin-top: 8px; }
+.panel-change .table-wrap { padding: 0 18px; }
+.panel-change .resp-section-title { padding: 12px 18px 0; }
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 980px) {
   .grid { grid-template-columns: 1fr; }
   .panel-manage { position: static; }
   .summary { grid-template-columns: repeat(3, 1fr); }
+  .change-compare { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .summary { grid-template-columns: repeat(2, 1fr); }

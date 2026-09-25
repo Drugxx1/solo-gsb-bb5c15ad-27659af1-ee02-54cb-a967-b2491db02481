@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "test": "node test/verify.test.js && node test/inventory.test.js && node test/batch.test.js && node test/responsibility.test.js && node test/batch-api.test.js && node test/responsibility-api.test.js && node test/appearance.test.js && node test/appearance-api.test.js && node test/conflict-fix.test.js && node test/conflict-fix-api.test.js && node test/signoff.test.js && node test/signoff-api.test.js && node test/signoff-plan.test.js && node test/signoff-plan-api.test.js"
+    "test": "node test/verify.test.js && node test/inventory.test.js && node test/batch.test.js && node test/responsibility.test.js && node test/batch-api.test.js && node test/responsibility-api.test.js && node test/appearance.test.js && node test/appearance-api.test.js && node test/conflict-fix.test.js && node test/conflict-fix-api.test.js && node test/signoff.test.js && node test/signoff-api.test.js && node test/signoff-plan.test.js && node test/signoff-plan-api.test.js && node test/change-preview.test.js && node test/change-preview-api.test.js"
   },
   "dependencies": {
     "express": "4.21.2"

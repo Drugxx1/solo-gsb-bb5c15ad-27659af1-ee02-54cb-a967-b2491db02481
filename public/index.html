@@ -161,6 +161,34 @@
       <div class="splan-readonly">计划只读：不会自动签收或修改任何记录；点击待签记录完成实际签收后，请重新计算计划。</div>
     </section>
 
+    <!-- 交接记录变更影响预演结果（只读模拟，不写入记录 / 签收） -->
+    <section id="change-panel" class="panel panel-change hidden">
+      <div class="panel-head change-head">
+        <h2>🧬 变更影响预演 · <span id="change-prop-name">-</span> · 记录 <span id="change-record-label">-</span></h2>
+        <button type="button" class="btn btn-sm" id="btn-change-close" title="关闭预演结果">✕ 关闭</button>
+      </div>
+      <div id="change-stale" class="banner banner-error hidden">
+        预演后数据已变化（数据版本已更新），以下模拟结果可能过期——
+        <button type="button" class="btn btn-sm btn-primary" id="btn-change-rerun">按原参数重新预演</button>
+      </div>
+      <div id="change-desc" class="change-desc"></div>
+      <div class="inv-summary" id="change-summary"></div>
+      <div class="change-compare">
+        <div class="change-col" id="change-before"></div>
+        <div class="change-col" id="change-after"></div>
+      </div>
+      <div class="resp-section-title">因此失效的签收（该记录当前有效签收，变更后立即失效）</div>
+      <div class="table-wrap">
+        <table class="table" id="change-invalid-table">
+          <thead>
+            <tr><th>记录</th><th>签收方</th><th>签收姓名</th><th>签收时间</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="splan-readonly">预演只读：不写入任何交接记录或签收；确认影响后请用记录表中的「修改 / 删除」实际执行，执行后相关签收需重新确认。</div>
+    </section>
+
     <div class="grid">
       <!-- 左：核验结论与时间轴 -->
       <section class="panel panel-results">
@@ -474,6 +502,55 @@
   </dialog>
 
   <div id="toast" class="toast hidden"></div>
+
+  <!-- 交接记录变更影响预演弹窗（只读模拟，不写入记录 / 签收） -->
+  <dialog id="change-dialog" class="dialog">
+    <form method="dialog" id="change-form">
+      <h3>交接记录变更影响预演</h3>
+      <p class="dialog-tip">
+        针对选定的交接记录拟定一次改动：<strong>修改分钟 / 交出者 / 接收者 / 备注</strong>，或选择<strong>删除该记录</strong>。
+        服务端按现有规则校验后<strong>只读模拟</strong>：对该道具分别重放变更前后的同分钟唯一链，
+        并按当前内容指纹核对双方签收（被改动记录的旧签收在模拟中失效），
+        并排展示首个冲突、最终持有人、已核实前缀及其阻断记录，以及因此失效的签收。
+        预演<strong>不写入任何记录或签收</strong>。
+      </p>
+      <div id="change-record" class="signoff-record"></div>
+      <div class="change-mode">
+        <label class="change-mode-opt">
+          <input type="radio" name="change-mode" value="edit" checked /> 修改记录
+        </label>
+        <label class="change-mode-opt">
+          <input type="radio" name="change-mode" value="delete" /> 删除该记录
+        </label>
+      </div>
+      <div id="change-fields">
+        <div class="field-row">
+          <label class="field field-minute">
+            <span>新分钟 <em>*</em></span>
+            <input type="number" id="change-minute" min="0" step="1" placeholder="如 3" />
+          </label>
+          <label class="field">
+            <span>新交出者 <em>*</em></span>
+            <input type="text" id="change-from" maxlength="30" list="people-list" placeholder="如 张三" />
+          </label>
+        </div>
+        <div class="field-row">
+          <label class="field">
+            <span>新接收者 <em>*</em></span>
+            <input type="text" id="change-to" maxlength="30" list="people-list" placeholder="如 李四" />
+          </label>
+          <label class="field">
+            <span>新备注</span>
+            <input type="text" id="change-note" maxlength="100" placeholder="交接场景（可选）" />
+          </label>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" class="btn" data-close>取消</button>
+        <button type="submit" class="btn btn-primary" id="change-submit">🧬 开始预演</button>
+      </div>
+    </form>
+  </dialog>
 
   <script src="app.js"></script>
 </body>

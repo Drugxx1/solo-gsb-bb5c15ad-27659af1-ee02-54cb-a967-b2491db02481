@@ -18,6 +18,7 @@ const {
   verifiedChain,
 } = require('./src/signoff');
 const { buildSignoffPlan, MAX_BUDGET } = require('./src/signoff-plan');
+const { previewRecordChange } = require('./src/change-preview');
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -301,6 +302,19 @@ app.delete('/api/records/:id', (req, res) => {
   store.saveSignoffs((data.signoffs || []).filter((s) => s.recordId !== req.params.id));
   res.status(204).end();
 });
+
+/* ---------------- 交接记录变更影响预演（只读，模拟变更前后，不写入记录 / 签收） ---------------- */
+
+app.post('/api/records/:id/change-preview', asyncRoute((req, res) => {
+  try {
+    // 纯读取 + 即时重放模拟，不写入任何数据；结果携带数据版本 rev 供页面核对过期
+    return res.json(previewRecordChange(store.getData(), req.params.id, req.body || {}));
+  } catch (err) {
+    if (err.code === 'NOT_FOUND') return res.status(404).json({ error: err.message });
+    if (err.code === 'BAD_REQUEST') return badRequest(res, err.message);
+    throw err;
+  }
+}));
 
 /* ---------------- 交接双方签收（交出者 / 接收者各自确认，状态独立并持久保存） ---------------- */
 
